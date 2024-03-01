@@ -405,6 +405,50 @@ func (p *AnacondaInstallerISOTree) ostreeContainerStages() []*osbuild.Stage {
 		image,
 		nil))
 
+	if p.KSPath != "" {
+		kickstartOptions := p.ostreeContainerKickstartOptions()
+		stages = append(stages, osbuild.NewKickstartStage(kickstartOptions))
+	} else {
+		kickstartOptions := p.ostreeContainerInteractiveOptions()
+		stages = append(stages, osbuild.NewKickstartStage(kickstartOptions))
+	}
+
+	// and what we can't do in a separate kickstart that we include
+	targetContainerTransport := "registry"
+
+	hardcodedKickstartBits := ""
+	if p.KSPath != "" {
+		// Because osbuild core only supports a subset of options, we append to the
+		// base here with some more hardcoded defaults
+		// that should very likely become configurable.
+		hardcodedKickstartBits := `
+reqpart --add-boot
+
+part swap --fstype=swap --size=1024
+part / --fstype=ext4 --grow
+
+reboot --eject
+`
+	}
+
+	// Workaround for lack of --target-imgref in Anaconda, xref https://github.com/osbuild/images/issues/380
+	hardcodedKickstartBits += fmt.Sprintf(`%%post
+bootc switch --mutate-in-place --transport %s %s
+%%end
+`, targetContainerTransport, p.containerSpec.LocalName)
+
+	kickstartFile, err := kickstartOptions.IncludeRaw(hardcodedKickstartBits)
+	if err != nil {
+		panic(err)
+	}
+
+	p.Files = []*fsnode.File{kickstartFile}
+
+	stages = append(stages, osbuild.GenFileNodesStages(p.Files)...)
+	return stages
+}
+
+func (p *AnacondaInstallerISOTree) ostreeContainerKickstartOptions() *KickstartStageOptions {
 	// do what we can in our kickstart stage
 	kickstartOptions, err := osbuild.NewKickstartStageOptionsWithOSTreeContainer(
 		p.KSPath,
@@ -435,38 +479,23 @@ func (p *AnacondaInstallerISOTree) ostreeContainerStages() []*osbuild.Stage {
 		All: true,
 	}
 
-	stages = append(stages, osbuild.NewKickstartStage(kickstartOptions))
+	return kickstartOptions
+}
 
-	// and what we can't do in a separate kickstart that we include
-	targetContainerTransport := "registry"
-
-	// Because osbuild core only supports a subset of options, we append to the
-	// base here with some more hardcoded defaults
-	// that should very likely become configurable.
-	hardcodedKickstartBits := `
-reqpart --add-boot
-
-part swap --fstype=swap --size=1024
-part / --fstype=ext4 --grow
-
-reboot --eject
-`
-
-	// Workaround for lack of --target-imgref in Anaconda, xref https://github.com/osbuild/images/issues/380
-	hardcodedKickstartBits += fmt.Sprintf(`%%post
-bootc switch --mutate-in-place --transport %s %s
-%%end
-`, targetContainerTransport, p.containerSpec.LocalName)
-
-	kickstartFile, err := kickstartOptions.IncludeRaw(hardcodedKickstartBits)
+func (p *AnacondaInstallerISOTree) ostreeContainerInteractiveKickstartOptions() *KickstartStageOptions {
+	kickstartOptions, err := osbuild.NewKickstartStageOptionsWithOSTreeContainer(
+		osbuild.KickstartPathInteractiveDefaults
+		p.Users,
+		p.Groups,
+		path.Join("/run/install/repo", p.PayloadPath),
+		"oci",
+		"",
+		"")
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("failed to create kickstart stage options: %v", err))
 	}
 
-	p.Files = []*fsnode.File{kickstartFile}
-
-	stages = append(stages, osbuild.GenFileNodesStages(p.Files)...)
-	return stages
+	return kickstartOptions
 }
 
 func (p *AnacondaInstallerISOTree) tarPayloadStages() []*osbuild.Stage {

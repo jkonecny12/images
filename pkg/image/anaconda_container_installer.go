@@ -101,7 +101,10 @@ func (img *AnacondaContainerInstaller) InstantiateManifest(m *manifest.Manifest,
 	bootTreePipeline.ISOLabel = isoLabel
 
 	kspath := osbuild.KickstartPathOSBuild
-	bootTreePipeline.KernelOpts = []string{fmt.Sprintf("inst.stage2=hd:LABEL=%s", isoLabel), fmt.Sprintf("inst.ks=hd:LABEL=%s:%s", isoLabel, kspath)}
+	bootTreePipeline.KernelOpts = []string{fmt.Sprintf("inst.stage2=hd:LABEL=%s", isoLabel)}
+	if !img.ISORootKickstart {
+		bootTreePipeline.KernelOpts = append(fmt.Sprintf("inst.ks=hd:LABEL=%s:%s", isoLabel, kspath))
+	}
 	if img.FIPS {
 		bootTreePipeline.KernelOpts = append(bootTreePipeline.KernelOpts, "fips=1")
 	}
@@ -118,8 +121,9 @@ func (img *AnacondaContainerInstaller) InstantiateManifest(m *manifest.Manifest,
 
 	isoTreePipeline.SquashfsCompression = img.SquashfsCompression
 
-	// For ostree installers, always put the kickstart file in the root of the ISO
-	isoTreePipeline.KSPath = kspath
+	if img.ISORootKickstart {
+		isoTreePipeline.KSPath = kspath
+	}
 	isoTreePipeline.PayloadPath = "/container"
 
 	isoTreePipeline.ContainerSource = &img.ContainerSource
